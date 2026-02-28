@@ -2,74 +2,23 @@ import tkinter as tk
 from tkinter import ttk
 import threading
 import time
-import ccxt
-import pandas as pd
-import os
-from datetime import datetime
-from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from datetime import datetime
 
-load_dotenv()
+from bot.data import obtener_datos, obtener_precio, obtener_balance
+from bot.strategy import calcular_sma, generar_señal
+from bot.risk import verificar_sl_tp, ejecutar_orden, ejecutar_venta_emergencia
 
-exchange = ccxt.binance({
-    'apiKey': os.getenv('API_KEY'),
-    'secret': os.getenv('SECRET_KEY'),
-    'options': {
-        'defaultType': 'spot',
-        'adjustForTimeDifference': True,
-    },
-    'hostname': 'testnet.binance.vision',
-    'urls': {
-        'api': {
-            'rest': 'https://testnet.binance.vision'
-        }
-    }
-})
-
-exchange.set_sandbox_mode(True)
-
-# ── Lógica del bot ──────────────────────────────────────────
-def obtener_datos():
-    velas = exchange.fetch_ohlcv('BTC/USDT', timeframe='1h', limit=100)
-    df = pd.DataFrame(velas, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df['sma20'] = df['close'].rolling(20).mean()
-    df['sma50'] = df['close'].rolling(50).mean()
-    return df.dropna()
-
-def generar_señal(df):
-    u, a = df.iloc[-1], df.iloc[-2]
-    if a['sma20'] <= a['sma50'] and u['sma20'] > u['sma50']:
-        return 'COMPRAR'
-    elif a['sma20'] >= a['sma50'] and u['sma20'] < u['sma50']:
-        return 'VENDER'
-    return 'ESPERAR'
-
-def ejecutar_orden(señal):
-    balance = exchange.fetch_balance()
-    usdt = balance['total'].get('USDT', 0)
-    btc = balance['total'].get('BTC', 0)
-    precio = exchange.fetch_ticker('BTC/USDT')['last']
-
-    if señal == 'COMPRAR' and usdt > 10:
-        cantidad = (usdt * 0.95) / precio
-        exchange.create_market_buy_order('BTC/USDT', cantidad)
-        return f"COMPRA | {cantidad:.6f} BTC a ${precio:.2f}"
-    elif señal == 'VENDER' and btc > 0.0001:
-        exchange.create_market_sell_order('BTC/USDT', btc)
-        return f"VENTA | {btc:.6f} BTC a ${precio:.2f}"
-    return None
-
-# ── Interfaz ────────────────────────────────────────────────
 class TradingBotUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Trading Bot - BTC/USDT")
-        self.root.geometry("700x750")
+        self.root.geometry("700x800")
         self.root.configure(bg="#1e1e2e")
         self.corriendo = False
+        self.precio_compra = None
         self.build_ui()
 
     def build_ui(self):
@@ -101,7 +50,25 @@ class TradingBotUI:
                                    bg="#313244", fg="#6c7086")
         self.lbl_ultima.grid(row=4, column=0, sticky="w", pady=2)
 
-        # Botón iniciar/detener
+        # Frame de configuracion
+        frame_config = tk.Frame(self.root, bg="#313244", padx=20, pady=10)
+        frame_config.pack(fill="x", padx=20, pady=5)
+
+        tk.Label(frame_config, text="Stop Loss %:", font=("Helvetica", 11),
+                 bg="#313244", fg="#cdd6f4").grid(row=0, column=0, sticky="w", padx=5)
+        self.stop_loss = tk.Entry(frame_config, width=6, font=("Helvetica", 11),
+                                  bg="#181825", fg="#cdd6f4", insertbackground="white")
+        self.stop_loss.insert(0, "3")
+        self.stop_loss.grid(row=0, column=1, padx=5)
+
+        tk.Label(frame_config, text="Take Profit %:", font=("Helvetica", 11),
+                 bg="#313244", fg="#cdd6f4").grid(row=0, column=2, sticky="w", padx=5)
+        self.take_profit = tk.Entry(frame_config, width=6, font=("Helvetica", 11),
+                                    bg="#181825", fg="#cdd6f4", insertbackground="white")
+        self.take_profit.insert(0, "5")
+        self.take_profit.grid(row=0, column=3, padx=5)
+
+        # Botón
         self.btn = tk.Button(self.root, text="▶ Iniciar Bot", font=("Helvetica", 12, "bold"),
                              bg="#a6e3a1", fg="#1e1e2e", relief="flat", padx=20, pady=8,
                              command=self.toggle_bot)
@@ -126,7 +93,7 @@ class TradingBotUI:
         frame_log.pack(fill="both", expand=True, padx=20, pady=5)
 
         self.log = tk.Text(frame_log, bg="#181825", fg="#cdd6f4", font=("Courier", 10),
-                           relief="flat", state="disabled", height=10)
+                           relief="flat", state="disabled", height=8)
         self.log.pack(fill="both", expand=True)
 
     def toggle_bot(self):
@@ -141,30 +108,46 @@ class TradingBotUI:
     def loop_bot(self):
         while self.corriendo:
             try:
-                df = obtener_datos()
-                señal = generar_señal(df)
-                self.actualizar_grafica(df)
-                balance = exchange.fetch_balance()
-                precio = exchange.fetch_ticker('BTC/USDT')['last']
-                usdt = balance['total'].get('USDT', 0)
-                btc = balance['total'].get('BTC', 0)
                 ahora = datetime.now().strftime('%H:%M:%S')
+                df = obtener_datos()
+                df = calcular_sma(df)
+                señal = generar_señal(df)
+                precio = obtener_precio()
+                balance = obtener_balance()
 
                 # Actualizar UI
                 self.lbl_precio.config(text=f"Precio BTC: ${precio:,.2f}")
-                self.lbl_usdt.config(text=f"Balance USDT: ${usdt:,.2f}")
-                self.lbl_btc.config(text=f"Balance BTC: {btc:.6f}")
+                self.lbl_usdt.config(text=f"Balance USDT: ${balance['USDT']:,.2f}")
+                self.lbl_btc.config(text=f"Balance BTC: {balance['BTC']:.6f}")
                 self.lbl_ultima.config(text=f"Última actualización: {ahora}")
 
                 colores = {'COMPRAR': '#a6e3a1', 'VENDER': '#f38ba8', 'ESPERAR': '#f9e2af'}
                 self.lbl_señal.config(text=f"Señal: {señal}", fg=colores[señal])
 
-                # Ejecutar orden si hay señal
-                resultado = ejecutar_orden(señal)
-                if resultado:
-                    self.agregar_log(f"[{ahora}] ✅ {resultado}")
+                self.actualizar_grafica(df)
+
+                # Verificar SL/TP
+                sl_tp = verificar_sl_tp(
+                    precio, self.precio_compra,
+                    float(self.stop_loss.get()),
+                    float(self.take_profit.get())
+                )
+
+                if sl_tp:
+                    resultado = ejecutar_venta_emergencia()
+                    if resultado:
+                        self.agregar_log(f"[{ahora}] 🚨 {sl_tp} | {resultado}")
+                        self.precio_compra = None
                 else:
-                    self.agregar_log(f"[{ahora}] ⏸ {señal}")
+                    resultado = ejecutar_orden(señal)
+                    if resultado:
+                        if 'COMPRA' in resultado:
+                            self.precio_compra = precio
+                        elif 'VENTA' in resultado:
+                            self.precio_compra = None
+                        self.agregar_log(f"[{ahora}] ✅ {resultado}")
+                    else:
+                        self.agregar_log(f"[{ahora}] ⏸ {señal}")
 
             except Exception as e:
                 self.agregar_log(f"❌ Error: {e}")
@@ -194,9 +177,3 @@ class TradingBotUI:
         self.log.insert("end", texto + "\n")
         self.log.see("end")
         self.log.config(state="disabled")
-
-# ── Main ────────────────────────────────────────────────────
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = TradingBotUI(root)
-    root.mainloop()
