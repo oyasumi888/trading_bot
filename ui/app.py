@@ -14,7 +14,7 @@ from bot.risk import verificar_sl_tp, ejecutar_orden, ejecutar_venta_emergencia
 class TradingBotUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Trading Bot - BTC/USDT")
+        self.root.title("Trading Bot")
         self.root.geometry("700x800")
         self.root.configure(bg="#1e1e2e")
         self.corriendo = False
@@ -25,6 +25,19 @@ class TradingBotUI:
         # Título
         tk.Label(self.root, text="🤖 Trading Bot", font=("Helvetica", 18, "bold"),
                  bg="#1e1e2e", fg="#cdd6f4").pack(pady=10)
+        
+        # Selector de cripto
+        frame_cripto = tk.Frame(self.root, bg="#1e1e2e")
+        frame_cripto.pack(fill="x", padx=20, pady=5)
+
+        tk.Label(frame_cripto, text="Par:", font=("Helvetica", 11),
+            bg="#1e1e2e", fg="#cdd6f4").pack(side="left", padx=5)
+
+        self.simbolo = ttk.Combobox(frame_cripto, width=12, font=("Helvetica", 11),
+                                values=["BTC/USDT", "ETH/USDT", "BNB/USDT", "SOL/USDT", "XRP/USDT"],
+                                state="readonly")
+        self.simbolo.set("BTC/USDT")
+        self.simbolo.pack(side="left", padx=5)
 
         # Frame de stats
         frame_stats = tk.Frame(self.root, bg="#313244", padx=20, pady=10)
@@ -109,16 +122,19 @@ class TradingBotUI:
         while self.corriendo:
             try:
                 ahora = datetime.now().strftime('%H:%M:%S')
-                df = obtener_datos()
+                simbolo = self.simbolo.get()
+
+                df = obtener_datos(simbolo)
                 df = calcular_sma(df)
                 señal = generar_señal(df)
-                precio = obtener_precio()
+                precio = obtener_precio(simbolo)
                 balance = obtener_balance()
 
                 # Actualizar UI
-                self.lbl_precio.config(text=f"Precio BTC: ${precio:,.2f}")
+                self.root.title(f"Trading Bot - {simbolo}")
+                self.lbl_precio.config(text=f"Precio {simbolo}: ${precio:,.2f}")
                 self.lbl_usdt.config(text=f"Balance USDT: ${balance['USDT']:,.2f}")
-                self.lbl_btc.config(text=f"Balance BTC: {balance['BTC']:.6f}")
+                self.lbl_btc.config(text=f"Balance {simbolo.split('/')[0]}: {balance.get(simbolo.split('/')[0], 0):.6f}")
                 self.lbl_ultima.config(text=f"Última actualización: {ahora}")
 
                 colores = {'COMPRAR': '#a6e3a1', 'VENDER': '#f38ba8', 'ESPERAR': '#f9e2af'}
@@ -134,12 +150,12 @@ class TradingBotUI:
                 )
 
                 if sl_tp:
-                    resultado = ejecutar_venta_emergencia()
+                    resultado = ejecutar_venta_emergencia(simbolo)
                     if resultado:
                         self.agregar_log(f"[{ahora}] 🚨 {sl_tp} | {resultado}")
                         self.precio_compra = None
                 else:
-                    resultado = ejecutar_orden(señal)
+                    resultado = ejecutar_orden(señal, simbolo)
                     if resultado:
                         if 'COMPRA' in resultado:
                             self.precio_compra = precio
