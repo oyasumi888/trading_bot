@@ -7,6 +7,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from datetime import datetime
 from bot.logger import logger
+from bot.notificaciones import enviar_mensaje
 from bot.data import obtener_datos, obtener_precio, obtener_balance
 from bot.strategy import calcular_sma, generar_señal
 from bot.risk import verificar_sl_tp, ejecutar_orden, ejecutar_venta_emergencia
@@ -154,14 +155,17 @@ class TradingBotUI:
                     if resultado:
                         self.agregar_log(f"[{ahora}] 🚨 {sl_tp} | {resultado}")
                         logger.warning(f"{sl_tp} | {resultado}")
+                        enviar_mensaje(f"🚨 <b>{sl_tp}</b>\n{resultado}")
                         self.precio_compra = None
                 else:
                     resultado = ejecutar_orden(señal, simbolo)
                     if resultado:
                         if 'COMPRA' in resultado:
                             self.precio_compra = precio
+                            enviar_mensaje(f"✅ <b>COMPRA ejecutada</b>\n{resultado}")
                         elif 'VENTA' in resultado:
                             self.precio_compra = None
+                            enviar_mensaje(f"✅ <b>VENTA ejecutada</b>\n{resultado}")
                         self.agregar_log(f"[{ahora}] ✅ {resultado}")
                         logger.info(f"ORDEN | {resultado}")
                     else:
@@ -171,7 +175,7 @@ class TradingBotUI:
             except Exception as e:
                 self.agregar_log(f"❌ Error: {e}")
                 logger.error(f"ERROR | {e}")
-
+            
             time.sleep(60)
 
     def actualizar_grafica(self, df):
